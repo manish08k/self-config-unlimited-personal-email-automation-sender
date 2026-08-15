@@ -154,7 +154,3 @@ COMMON ERRORS
   → Make sure your PDF filename matches RESUME_PDF_PATH in config.py
   → File must be in the same folder as email_sender.py
 
-
-================================================================
-  GOOD LUCK WITH YOUR JOB SEARCH!
-================================================================
