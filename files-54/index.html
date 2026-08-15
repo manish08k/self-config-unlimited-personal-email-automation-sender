@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Resume Email Sender</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 15px; }
+  h2 { margin-bottom: 5px; }
+  h3 { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 15px; }
+  label { display: block; margin-top: 12px; font-weight: bold; }
+  input, textarea { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box; }
+  textarea { height: 70px; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  button { margin-top: 15px; padding: 8px 18px; cursor: pointer; }
+  #log { background: #f5f5f5; padding: 10px; height: 200px; overflow-y: auto; margin-top: 15px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+  #progress { margin-top: 10px; font-weight: bold; }
+  #waiting { color: #b8860b; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { text-align: left; padding: 5px; border-bottom: 1px solid #ddd; font-size: 14px; }
+  .hidden { display: none; }
+  .remove-btn { color: red; cursor: pointer; }
+  .add-row { display: flex; gap: 8px; align-items: flex-end; }
+  .add-row > div { flex: 1; }
+  .add-row input { margin-top: 0; }
+</style>
+</head>
+<body>
+
+<h2>Resume Email Sender</h2>
+
+<h3>Gmail Accounts (auto-rotates when one hits its daily limit)</h3>
+<table id="acctTable">
+  <thead><tr><th>Email</th><th>Used Today</th><th>Daily Limit</th><th></th></tr></thead>
+  <tbody id="acctBody"></tbody>
+</table>
+
+<div class="add-row">
+  <div>
+    <label>Gmail Address</label>
+    <input id="newEmail" placeholder="you@gmail.com">
+  </div>
+  <div>
+    <label>App Password (16-digit)</label>
+    <input id="newPassword" type="password" placeholder="abcd efgh ijkl mnop">
+  </div>
+  <div style="flex:0 0 100px">
+    <label>Daily Limit</label>
+    <input id="newLimit" value="500">
+  </div>
+  <button id="addAcctBtn">Add</button>
+</div>
+
+<h3>Campaign</h3>
+<form id="form">
+  <label>SMTP Host</label>
+  <input name="smtp_host" value="smtp.gmail.com">
+
+  <label>SMTP Port</label>
+  <input name="smtp_port" value="587">
+
+  <label>Sender Name (shown on all accounts)</label>
+  <input name="sender_name">
+
+  <label>Subject Template ({name}, {company}, {title})</label>
+  <input name="subject_template" value="Application for {title} at {company}">
+
+  <label>Body Template</label>
+  <textarea name="body_template">Dear {name},
+
+I am interested in opportunities at {company}. Please find my resume attached.</textarea>
+
+  <label>Resume PDF</label>
+  <input type="file" name="resume" accept=".pdf" required>
+
+  <label>Contacts File (.xlsx / .csv)</label>
+  <input type="file" name="contacts" accept=".xlsx,.xls,.csv" required>
+
+  <div class="row">
+    <div>
+      <label>Email Column</label>
+      <input name="email_col" value="Email">
+    </div>
+    <div>
+      <label>Name Column</label>
+      <input name="name_col" value="Name">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>Company Column</label>
+      <input name="company_col" value="Company">
+    </div>
+    <div>
+      <label>Title Column</label>
+      <input name="title_col" value="Title">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>Delay (sec)</label>
+      <input name="delay" value="3">
+    </div>
+    <div>
+      <label>Batch Size</label>
+      <input name="batch_size" value="40">
+    </div>
+    <div>
+      <label>Batch Pause (sec)</label>
+      <input name="batch_pause" value="60">
+    </div>
+  </div>
+
+  <button type="submit">Start Campaign</button>
+  <button type="button" id="stopBtn">Stop</button>
+</form>
+
+<div id="progress"></div>
+<div id="waiting" class="hidden">All accounts hit their daily limit — waiting to auto-resume...</div>
+<div id="log"></div>
+<a id="downloadFailed" class="hidden" href="/download-failed">Download failed_emails.csv</a>
+
+<script>
+const form = document.getElementById("form");
+const logDiv = document.getElementById("log");
+const progressDiv = document.getElementById("progress");
+const waitingDiv = document.getElementById("waiting");
+const downloadLink = document.getElementById("downloadFailed");
+const acctBody = document.getElementById("acctBody");
+let poller = null;
+
+async function loadAccounts() {
+  const res = await fetch("/accounts");
+  const accounts = await res.json();
+  acctBody.innerHTML = "";
+  accounts.forEach(a => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${a.email}</td><td>${a.used_today}</td><td>${a.daily_limit}</td>
+      <td><span class="remove-btn" data-email="${a.email}">remove</span></td>`;
+    acctBody.appendChild(tr);
+  });
+  document.querySelectorAll(".remove-btn").forEach(el => {
+    el.addEventListener("click", async () => {
+      await fetch("/accounts/remove", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ email: el.dataset.email })
+      });
+      loadAccounts();
+    });
+  });
+}
+
+document.getElementById("addAcctBtn").addEventListener("click", async () => {
+  const email = document.getElementById("newEmail").value.trim();
+  const password = document.getElementById("newPassword").value.trim();
+  const daily_limit = document.getElementById("newLimit").value.trim() || 500;
+  if (!email || !password) { alert("Email and app password required."); return; }
+  const res = await fetch("/accounts/add", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ email, password, daily_limit })
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  document.getElementById("newEmail").value = "";
+  document.getElementById("newPassword").value = "";
+  document.getElementById("newLimit").value = "500";
+  loadAccounts();
+});
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(form);
+  const res = await fetch("/start", { method: "POST", body: fd });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  logDiv.textContent = "";
+  downloadLink.classList.add("hidden");
+  poller = setInterval(poll, 1500);
+});
+
+document.getElementById("stopBtn").addEventListener("click", async () => {
+  await fetch("/stop", { method: "POST" });
+});
+
+async function poll() {
+  const res = await fetch("/status");
+  const s = await res.json();
+  progressDiv.textContent = `Sent: ${s.sent} | Failed: ${s.failed} | Total: ${s.total} | Account: ${s.current_account} | Sending to: ${s.current_contact}`;
+  logDiv.textContent = s.log.join("\n");
+  logDiv.scrollTop = logDiv.scrollHeight;
+  waitingDiv.classList.toggle("hidden", !s.waiting);
+  if (s.failed_csv) downloadLink.classList.remove("hidden");
+  if (s.accounts) {
+    acctBody.innerHTML = "";
+    s.accounts.forEach(a => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${a.email}</td><td>${a.used_today}</td><td>${a.daily_limit}</td>
+        <td><span class="remove-btn" data-email="${a.email}">remove</span></td>`;
+      acctBody.appendChild(tr);
+    });
+  }
+  if (!s.running && s.done) {
+    clearInterval(poller);
+  }
+}
+
+loadAccounts();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,7 @@
+__pycache__/
+progress.json
+email_log.txt
+failed_emails.csv
+HR_Lists.xlsx
+config.py
+.env
